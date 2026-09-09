@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from backend.schemas.analysis import AnalysisRequest, AnalysisResponse
-from backend.services.analysis import build_mock_analysis
+from backend.services.analysis import build_analysis
 
 router = APIRouter()
 
@@ -16,5 +16,5 @@ def health() -> dict[str, str]:
 
 @router.post("/analyze", response_model=AnalysisResponse, tags=["analysis"])
 def analyze(request: AnalysisRequest) -> AnalysisResponse:
-    """Return a deterministic, taxonomy-aligned mock analysis."""
-    return build_mock_analysis(request)
+    """Run the deterministic SystemLens reasoning pipeline."""
+    return build_analysis(request)

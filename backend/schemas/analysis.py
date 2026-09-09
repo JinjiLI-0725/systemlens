@@ -24,14 +24,7 @@ class AnalysisRequest(BaseModel):
     """A problem and the taxonomy lenses through which to examine it."""
 
     problem: str = Field(min_length=1, max_length=10_000)
-    selected_lenses: list[LensName] = Field(
-        default_factory=lambda: [
-            LensName.SYSTEMS_THINKING,
-            LensName.CRITICAL_THINKING,
-            LensName.CAUSAL_REASONING,
-        ],
-        min_length=1,
-    )
+    selected_lenses: list[LensName] | None = Field(default=None, min_length=1)
 
 
 class SelectedLens(BaseModel):
@@ -100,6 +93,14 @@ class GraphEdge(BaseModel):
     polarity: str
 
 
+class ExecutionTrace(BaseModel):
+    """Inspectable record of deterministic routing and execution."""
+
+    problem_class: str
+    selected_lenses: list[LensName]
+    operations: list[str]
+
+
 class AnalysisResponse(BaseModel):
     """The complete structured result returned by the analysis endpoint."""
 
@@ -113,3 +114,4 @@ class AnalysisResponse(BaseModel):
     confidence: Confidence
     graph_nodes: list[GraphNode]
     graph_edges: list[GraphEdge]
+    execution_trace: ExecutionTrace
