@@ -2,7 +2,7 @@
 
 SystemLens is an API for structuring complex problems through explicit thinking lenses. Its definitions come from [`docs/lens-taxonomy.md`](docs/lens-taxonomy.md), supported by [`docs/thinking-canon.md`](docs/thinking-canon.md).
 
-## Intelligence Layer v0.1
+## Intelligence Layer v0.2
 
 The `/analyze` endpoint now follows the intended SystemLens architecture:
 
@@ -15,7 +15,7 @@ problem
   → structured response with execution trace
 ```
 
-This is deliberately **deterministic v0.1**. It makes no LLM or external-service calls, and all inferred output is labeled as a preliminary hypothesis rather than a fact. Templates make the architecture inspectable and testable while leaving execution simple to replace later.
+This is deliberately **deterministic v0.2**. It makes no LLM or external-service calls, and all inferred output is labeled as a preliminary hypothesis rather than a fact. Templates make the architecture inspectable and testable while leaving execution simple to replace later.
 
 ### Problem classifier
 
@@ -36,7 +36,9 @@ Each problem class maps to a small relevant lens set rather than running every l
 
 ### Atomic operations and execution planner
 
-The machine-readable registry in `backend/reasoning/operations.py` describes each operation's ID, name, lens family, purpose, required inputs, questions, and output type. The planner expands selected lenses into a stable, deduplicated sequence. See [`docs/atomic-operations.md`](docs/atomic-operations.md) for the v0.1 catalog.
+The **Canon** is the broader research library: [`docs/thinking-canon.md`](docs/thinking-canon.md) records the sources and [`docs/atomic-operations.md`](docs/atomic-operations.md) defines all 30 Canon v0.2 operations. Documentation does not imply that an operation is executable.
+
+The **Active Registry** is the curated production subset in `backend/reasoning/operations.py`. It activates exactly 18 operations, each with a stable ID, name, canonical family, purpose, inputs, critical questions, outputs, and source basis. The remaining 12 documented operations are explicitly marked inactive and cannot be scheduled. The planner expands selected lenses into a stable, deduplicated sequence containing active operations only.
 
 ### Execution trace
 
@@ -47,7 +49,7 @@ Responses retain the existing structured fields and add:
   "execution_trace": {
     "problem_class": "system_problem",
     "selected_lenses": ["systems_thinking", "critical_thinking"],
-    "operations": ["define_system_boundary", "identify_actors", "map_relationships"]
+    "operations": ["define_system_boundary", "identify_stocks_and_flows", "detect_feedback_loops", "identify_leverage_points"]
   }
 }
 ```

@@ -1,4 +1,4 @@
-"""Orchestration and deterministic operation execution for SystemLens v0.1."""
+"""Orchestration and deterministic operation execution for SystemLens v0.2."""
 
 import re
 
@@ -198,6 +198,26 @@ def build_analysis(request: AnalysisRequest) -> AnalysisResponse:
                 source="outcome",
                 target="drivers",
                 relationship="may feed back into (preliminary hypothesis)",
+                polarity="uncertain",
+            )
+        )
+
+    if "identify_stocks_and_flows" in plan:
+        graph_edges.append(
+            GraphEdge(
+                source="drivers",
+                target="outcome",
+                relationship="candidate inflow or outflow affecting an accumulation",
+                polarity="uncertain",
+            )
+        )
+
+    if "distinguish_correlation_from_causation" in plan:
+        graph_edges.append(
+            GraphEdge(
+                source="drivers",
+                target="outcome",
+                relationship="observed association; causal direction not established",
                 polarity="uncertain",
             )
         )

@@ -3,7 +3,12 @@
 from fastapi.testclient import TestClient
 
 from backend.main import app
-from backend.reasoning.operations import OPERATIONS, OPERATION_REGISTRY
+from backend.reasoning.operations import (
+    ACTIVE_OPERATIONS,
+    CANON_OPERATION_IDS,
+    INACTIVE_OPERATION_IDS,
+    OPERATION_REGISTRY,
+)
 from backend.schemas.analysis import LensName
 from backend.services.classifier import ProblemClass, classify_problem
 from backend.services.lens_selector import select_lenses
@@ -56,23 +61,45 @@ def test_explicit_selected_lenses_override_automatic_selection() -> None:
     body = response.json()
     assert [lens["name"] for lens in body["selected_lenses"]] == ["systems_thinking"]
     assert body["execution_trace"]["selected_lenses"] == ["systems_thinking"]
+    assert body["execution_trace"]["operations"] == [
+        "define_system_boundary",
+        "identify_stocks_and_flows",
+        "detect_feedback_loops",
+        "identify_leverage_points",
+    ]
 
 
 def test_operation_registry_is_machine_readable_and_bounded() -> None:
-    assert 12 <= len(OPERATIONS) <= 15
-    assert len(OPERATION_REGISTRY) == len(OPERATIONS)
-    assert (
-        OPERATION_REGISTRY["detect_confounders"].as_dict()["output_type"]
-        == "confounder_list"
+    assert len(ACTIVE_OPERATIONS) == 18
+    assert len(OPERATION_REGISTRY) == len(ACTIVE_OPERATIONS)
+    assert len(CANON_OPERATION_IDS) == 30
+    assert OPERATION_REGISTRY["detect_confounders"].outputs == (
+        "confounder",
+        "pathway",
+        "observed_or_unobserved",
+        "severity",
     )
+
+
+def test_every_active_operation_has_execution_metadata() -> None:
+    for operation in ACTIVE_OPERATIONS:
+        assert operation.source_basis
+        assert operation.questions
+        assert operation.outputs
+
+
+def test_inactive_operations_cannot_be_scheduled() -> None:
+    all_lenses = list(LensName)
+    plan = plan_operations(all_lenses)
+    assert set(plan) == set(OPERATION_REGISTRY)
+    assert not (set(plan) & INACTIVE_OPERATION_IDS)
 
 
 def test_planning_is_ordered_and_deterministic() -> None:
     lenses = [LensName.SYSTEMS_THINKING, LensName.CRITICAL_THINKING]
     expected = [
         "define_system_boundary",
-        "identify_actors",
-        "map_relationships",
+        "identify_stocks_and_flows",
         "detect_feedback_loops",
         "identify_leverage_points",
         "identify_claim",
