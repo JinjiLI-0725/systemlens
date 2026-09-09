@@ -2,7 +2,7 @@
 
 SystemLens is an API for structuring complex problems through explicit thinking lenses. Its definitions come from [`docs/lens-taxonomy.md`](docs/lens-taxonomy.md), supported by [`docs/thinking-canon.md`](docs/thinking-canon.md).
 
-## Intelligence Layer v0.2
+## Intelligence layer and optional LLM execution
 
 The `/analyze` endpoint now follows the intended SystemLens architecture:
 
@@ -11,11 +11,43 @@ problem
   → deterministic problem classification
   → relevant lens selection
   → ordered atomic-operation plan
-  → deterministic operation-informed analysis
+  → logical operation batches
+  → operation executor (deterministic or provider-backed)
+  → Pydantic validation and synthesis
   → structured response with execution trace
 ```
 
-This is deliberately **deterministic v0.2**. It makes no LLM or external-service calls, and all inferred output is labeled as a preliminary hypothesis rather than a fact. Templates make the architecture inspectable and testable while leaving execution simple to replace later.
+Execution remains deterministic by default. Optionally, the same plan can be executed through an LLM provider; all inferred output is still labeled as a preliminary hypothesis rather than a fact. The public `/analyze` request and response fields are preserved.
+
+### Execution architecture
+
+```text
+planner
+  → execution batches (grouped by operation family, at most four operations)
+  → provider-neutral operation executor
+      ├── deterministic local fallback
+      └── LLMProvider interface
+            └── DeepSeek OpenAI-compatible adapter
+  → Pydantic batch validation
+      └── one JSON repair attempt, then deterministic batch fallback
+  → structured synthesis
+  → AnalysisResponse
+```
+
+The **Canon** and **Active Registry** remain provider-independent. They define what an operation means; they never import DeepSeek or construct vendor requests. Prompts are built from registry metadata, and another provider can be added by implementing `LLMProvider.generate_structured` without changing the planner, registry, batching, or synthesis.
+
+### Enable DeepSeek
+
+DeepSeek is the first provider and uses its OpenAI-compatible chat-completions API. Secrets are read only from the environment:
+
+```bash
+export SYSTEMLENS_EXECUTION_MODE=llm
+export DEEPSEEK_API_KEY='your-key-here'
+export DEEPSEEK_MODEL='deepseek-chat'  # optional; this is the default
+uvicorn backend.main:app --reload
+```
+
+Never put the API key in source control. If `SYSTEMLENS_EXECUTION_MODE` is omitted or set to `deterministic`, no provider call is made. If `llm` is requested but `DEEPSEEK_API_KEY` is absent, SystemLens uses deterministic execution and records the reason in `execution_trace.fallback_events`. Invalid model JSON is retried once with a repair instruction; if repair also fails, only that batch falls back deterministically.
 
 ### Problem classifier
 
@@ -49,7 +81,13 @@ Responses retain the existing structured fields and add:
   "execution_trace": {
     "problem_class": "system_problem",
     "selected_lenses": ["systems_thinking", "critical_thinking"],
-    "operations": ["define_system_boundary", "identify_stocks_and_flows", "detect_feedback_loops", "identify_leverage_points"]
+    "operations": ["define_system_boundary", "identify_stocks_and_flows", "detect_feedback_loops", "identify_leverage_points"],
+    "execution_mode": "deterministic",
+    "requested_execution_mode": "deterministic",
+    "provider": null,
+    "model": null,
+    "batches": [["define_system_boundary", "identify_stocks_and_flows", "detect_feedback_loops", "identify_leverage_points"]],
+    "fallback_events": []
   }
 }
 ```
@@ -88,13 +126,10 @@ pytest
 ```text
 backend/
 ├── api/          # FastAPI route definitions
+├── llm/          # Provider interface, configuration, and adapters
 ├── reasoning/    # Atomic-operation registry
 ├── schemas/      # Pydantic API contracts
 ├── services/     # Classifier, selector, planner, and analysis orchestration
 ├── tests/        # Backend and pipeline tests
 └── main.py       # Application setup
 ```
-
-## Future LLM-backed execution
-
-The public API need not change when an LLM is introduced. Classification and planning can continue to produce the same lens and operation IDs, while deterministic templates are replaced operation-by-operation with an executor that submits each registry operation's requirements and questions to an LLM. The executor's results can still be validated into the existing Pydantic response models, and `execution_trace` can continue to report exactly what ran.

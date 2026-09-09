@@ -16,5 +16,5 @@ def health() -> dict[str, str]:
 
 @router.post("/analyze", response_model=AnalysisResponse, tags=["analysis"])
 def analyze(request: AnalysisRequest) -> AnalysisResponse:
-    """Run the deterministic SystemLens reasoning pipeline."""
+    """Run the configured SystemLens reasoning pipeline."""
     return build_analysis(request)
