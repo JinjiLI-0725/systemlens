@@ -1,6 +1,5 @@
 """OpenRouter adapter for its OpenAI-compatible chat completions API."""
 
-import json
 from typing import Any
 
 import httpx
@@ -65,15 +64,18 @@ class OpenRouterProvider(LLMProvider):
             content = response.json()["choices"][0]["message"]["content"]
             if not isinstance(content, str):
                 raise TypeError("message content is not text")
-            return response_model.model_validate_json(content)
-        except (
-            httpx.HTTPError,
-            KeyError,
-            IndexError,
-            TypeError,
-            json.JSONDecodeError,
-            ValidationError,
-        ) as exc:
+            try:
+                return response_model.model_validate_json(content)
+            except ValidationError as exc:
+                category = (
+                    "parsing_error"
+                    if any(error["type"] == "json_invalid" for error in exc.errors())
+                    else "schema_error"
+                )
+                raise LLMProviderError(
+                    "OpenRouter returned an invalid structured response", category
+                ) from exc
+        except (httpx.HTTPError, KeyError, IndexError, TypeError) as exc:
             raise LLMProviderError(
                 "OpenRouter returned no valid structured response"
             ) from exc
