@@ -94,11 +94,17 @@ class GraphEdge(BaseModel):
 
 
 class ExecutionTrace(BaseModel):
-    """Inspectable record of deterministic routing and execution."""
+    """Inspectable execution metadata that never contains hidden reasoning."""
 
     problem_class: str
     selected_lenses: list[LensName]
     operations: list[str]
+    execution_mode: str = "deterministic"
+    requested_execution_mode: str = "deterministic"
+    provider: str | None = None
+    model: str | None = None
+    batches: list[list[str]] = Field(default_factory=list)
+    fallback_events: list[str] = Field(default_factory=list)
 
 
 class AnalysisResponse(BaseModel):

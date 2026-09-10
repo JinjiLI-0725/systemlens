@@ -1,8 +1,11 @@
-"""Orchestration and deterministic operation execution for SystemLens v0.2."""
+"""Orchestration, execution, and synthesis for SystemLens."""
 
 import re
 
 from backend.reasoning.operations import LENS_PURPOSES, operations_for_lens
+from backend.llm.base import LLMProvider
+from backend.llm.config import ExecutionMode, LLMConfig
+from backend.llm.deepseek import DeepSeekProvider
 from backend.schemas.analysis import (
     AnalysisRequest,
     AnalysisResponse,
@@ -17,9 +20,11 @@ from backend.schemas.analysis import (
     SelectedLens,
     Unknown,
 )
+from backend.schemas.execution import BatchResult
 from backend.services.classifier import ProblemClass, classify_problem
 from backend.services.lens_selector import select_lenses
 from backend.services.planner import plan_operations
+from backend.services.executor import batch_operations, execute_batches
 
 EVIDENCE_SIGNALS = (
     "according to",
@@ -130,7 +135,7 @@ def _selected_lens_details(lenses: list[LensName]) -> list[SelectedLens]:
     ]
 
 
-def build_analysis(request: AnalysisRequest) -> AnalysisResponse:
+def _build_deterministic_analysis(request: AnalysisRequest) -> AnalysisResponse:
     """Run classification, lens selection, planning, and template execution."""
     problem = request.problem.strip()
     problem_class = classify_problem(problem)
@@ -288,5 +293,105 @@ def build_analysis(request: AnalysisRequest) -> AnalysisResponse:
     )
 
 
+def _synthesize_llm_analysis(
+    baseline: AnalysisResponse, results: list[BatchResult]
+) -> AnalysisResponse:
+    """Combine validated batch findings into the established response contract."""
+    findings = [finding for result in results for finding in result.findings]
+    conclusions = [text for finding in findings for text in finding.conclusions]
+    assumptions = [text for finding in findings for text in finding.assumptions]
+    unknowns = [text for finding in findings for text in finding.unknowns]
+    observations = [text for finding in findings for text in finding.observations]
+    average = (
+        round(sum(item.confidence for item in findings) / len(findings), 2)
+        if findings
+        else baseline.confidence.score
+    )
+    confidence = Confidence(
+        score=average,
+        level="high" if average >= 0.75 else "moderate" if average >= 0.5 else "low",
+        rationale=(
+            "Calibrated from validated batch outputs; conclusions remain preliminary and "
+            "source evidence has not been independently verified."
+        ),
+    )
+    payload = baseline.model_dump()
+    payload.update(
+        {
+            "summary": " ".join(conclusions[:4]) or baseline.summary,
+            "claims": [
+                Claim(statement=item, evidence=observations[:3], confidence=confidence)
+                for item in conclusions[:6]
+            ]
+            or baseline.claims,
+            "assumptions": [
+                Assumption(
+                    statement=f"Preliminary hypothesis: {item}",
+                    impact="If false, one or more batch conclusions may change.",
+                    validation_question="What observation would verify or falsify this assumption?",
+                )
+                for item in dict.fromkeys(assumptions)
+            ][:8]
+            or baseline.assumptions,
+            "unknowns": [
+                Unknown(question=item, importance="high")
+                for item in dict.fromkeys(unknowns)
+            ][:8]
+            or baseline.unknowns,
+            "confidence": confidence,
+        }
+    )
+    return AnalysisResponse.model_validate(payload)
+
+
+def build_analysis(
+    request: AnalysisRequest,
+    config: LLMConfig | None = None,
+    provider: LLMProvider | None = None,
+) -> AnalysisResponse:
+    """Run the pipeline with optional provider-backed batch execution."""
+    settings = config or LLMConfig.from_env()
+    baseline = _build_deterministic_analysis(request)
+    batches = batch_operations(baseline.execution_trace.operations)
+    trace_updates = {
+        "requested_execution_mode": settings.execution_mode.value,
+        "execution_mode": settings.effective_mode.value,
+        "batches": [batch.operations for batch in batches],
+    }
+    if settings.effective_mode is ExecutionMode.DETERMINISTIC:
+        if settings.execution_mode is ExecutionMode.LLM:
+            trace_updates["fallback_events"] = [
+                "LLM execution requested without an API key; deterministic execution used."
+            ]
+        return baseline.model_copy(
+            update={
+                "execution_trace": baseline.execution_trace.model_copy(
+                    update=trace_updates
+                )
+            }
+        )
+
+    active_provider = provider or DeepSeekProvider(
+        api_key=settings.deepseek_api_key or "",
+        model=settings.deepseek_model,
+        base_url=settings.deepseek_base_url,
+        timeout=settings.timeout_seconds,
+    )
+    execution = execute_batches(request.problem.strip(), batches, active_provider)
+    response = _synthesize_llm_analysis(baseline, execution.results)
+    trace_updates.update(
+        {
+            "provider": active_provider.name,
+            "model": active_provider.model,
+            "fallback_events": execution.fallbacks,
+        }
+    )
+    return response.model_copy(
+        update={
+            "execution_trace": baseline.execution_trace.model_copy(update=trace_updates)
+        }
+    )
+
+
 # Compatibility for internal callers that used the v0 mock function name.
-build_mock_analysis = build_analysis
+build_mock_analysis = _build_deterministic_analysis
