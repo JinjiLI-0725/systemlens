@@ -23,14 +23,14 @@ Execution remains deterministic by default. Optionally, the same plan can be exe
 
 ```text
 planner
-  → execution batches (grouped by operation family, at most four operations)
+  → execution batches (grouped by operation family, at most two operations by default)
   → provider-neutral operation executor
       ├── deterministic local fallback
       └── LLMProvider interface
             ├── DeepSeek OpenAI-compatible adapter
             └── OpenRouter OpenAI-compatible adapter
   → Pydantic batch validation
-      └── one JSON repair attempt, then deterministic batch fallback
+      └── preserve valid findings and deterministically fill missing operations
   → structured synthesis
   → AnalysisResponse
 ```
@@ -62,7 +62,20 @@ export OPENROUTER_MODEL='~deepseek/deepseek-v4-flash-latest'  # optional; this i
 uvicorn backend.main:app --reload
 ```
 
-Never put API keys in source control or logs. Supported `SYSTEMLENS_LLM_PROVIDER` values are `deepseek` and `openrouter`; `deepseek` remains the default. If `SYSTEMLENS_EXECUTION_MODE` is omitted or set to `deterministic`, no provider call is made. If `llm` is requested but the selected provider's API key is absent, SystemLens uses deterministic execution and records the reason in `execution_trace.fallback_events`. Invalid model JSON is retried once with a repair instruction; if repair also fails, only that batch falls back deterministically.
+Never put API keys in source control or logs. Supported `SYSTEMLENS_LLM_PROVIDER` values are `deepseek` and `openrouter`; `deepseek` remains the default. If `SYSTEMLENS_EXECUTION_MODE` is omitted or set to `deterministic`, no provider call is made. If `llm` is requested but the selected provider's API key is absent, SystemLens uses deterministic execution and records the reason in `execution_trace.fallback_events`. SystemLens does not make a second full model call to repair a batch: valid findings are preserved, extras and duplicates are discarded, and only missing findings are filled deterministically. Invalid JSON or a response with no usable requested findings falls back for that batch.
+
+Latency and capacity limits can be tuned without changing the provider abstraction:
+
+```bash
+export SYSTEMLENS_LLM_TIMEOUT=20          # timeout for each provider call, in seconds
+export SYSTEMLENS_MAX_OUTPUT_TOKENS=1200  # provider response token ceiling
+export SYSTEMLENS_BATCH_SIZE=2            # operations in each family batch
+export SYSTEMLENS_REQUEST_TIMEOUT=30      # overall concurrent execution budget, in seconds
+```
+
+Independent batches execute concurrently. Results are restored to planner order after
+completion, and any batch still running when the overall request budget expires receives
+the deterministic fallback.
 
 ### Problem classifier
 
@@ -101,8 +114,12 @@ Responses retain the existing structured fields and add:
     "requested_execution_mode": "deterministic",
     "provider": null,
     "model": null,
-    "batches": [["define_system_boundary", "identify_stocks_and_flows", "detect_feedback_loops", "identify_leverage_points"]],
-    "fallback_events": []
+    "batches": [["define_system_boundary", "identify_stocks_and_flows"], ["detect_feedback_loops", "identify_leverage_points"]],
+    "fallback_events": [],
+    "batch_timings": [
+      {"batch_name": "systems_thinking", "elapsed_ms": 842, "fallback_used": false, "status": "llm", "missing_operation_ids": [], "validation_error_category": null},
+      {"batch_name": "systems_thinking", "elapsed_ms": 901, "fallback_used": true, "status": "partial_fallback", "missing_operation_ids": ["identify_leverage_points"], "validation_error_category": "coverage_error"}
+    ]
   }
 }
 ```

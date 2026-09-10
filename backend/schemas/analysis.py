@@ -4,6 +4,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from backend.schemas.execution import BatchTiming
+
 
 class LensName(str, Enum):
     """Lenses defined by the SystemLens taxonomy."""
@@ -105,6 +107,7 @@ class ExecutionTrace(BaseModel):
     model: str | None = None
     batches: list[list[str]] = Field(default_factory=list)
     fallback_events: list[str] = Field(default_factory=list)
+    batch_timings: list[BatchTiming] = Field(default_factory=list)
 
 
 class AnalysisResponse(BaseModel):

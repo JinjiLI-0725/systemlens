@@ -18,6 +18,10 @@ class Message(BaseModel):
 class LLMProviderError(RuntimeError):
     """Raised when a provider cannot return a valid structured result."""
 
+    def __init__(self, message: str, category: str = "provider_error") -> None:
+        super().__init__(message)
+        self.category = category
+
 
 class LLMProvider(ABC):
     """Replaceable interface for schema-validated structured generation."""

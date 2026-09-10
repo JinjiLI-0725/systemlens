@@ -1,5 +1,6 @@
 """Environment-driven LLM execution configuration."""
 
+import math
 import os
 from dataclasses import dataclass
 from enum import Enum
@@ -31,7 +32,10 @@ class LLMConfig:
     openrouter_api_key: str | None = None
     openrouter_model: str = "~deepseek/deepseek-v4-flash-latest"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    timeout_seconds: float = 45.0
+    timeout_seconds: float = 20.0
+    max_output_tokens: int = 1200
+    batch_size: int = 2
+    request_timeout_seconds: float = 30.0
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -61,6 +65,14 @@ class LLMConfig:
             openrouter_base_url=os.getenv(
                 "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
             ),
+            timeout_seconds=_positive_float("SYSTEMLENS_LLM_TIMEOUT", 20.0),
+            max_output_tokens=_positive_int(
+                "SYSTEMLENS_MAX_OUTPUT_TOKENS", 1200
+            ),
+            batch_size=_positive_int("SYSTEMLENS_BATCH_SIZE", 2),
+            request_timeout_seconds=_positive_float(
+                "SYSTEMLENS_REQUEST_TIMEOUT", 30.0
+            ),
         )
 
     @property
@@ -76,3 +88,21 @@ class LLMConfig:
         if self.execution_mode is ExecutionMode.LLM and self.api_key:
             return ExecutionMode.LLM
         return ExecutionMode.DETERMINISTIC
+
+
+def _positive_float(name: str, default: float) -> float:
+    """Read a positive finite duration, otherwise retain the default."""
+    try:
+        value = float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 and math.isfinite(value) else default
+
+
+def _positive_int(name: str, default: int) -> int:
+    """Read a positive integer limit, otherwise retain the default."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default

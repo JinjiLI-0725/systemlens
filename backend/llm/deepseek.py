@@ -1,6 +1,5 @@
 """DeepSeek adapter for its OpenAI-compatible chat completions API."""
 
-import json
 from typing import Any
 
 import httpx
@@ -18,12 +17,14 @@ class DeepSeekProvider(LLMProvider):
         model: str = "deepseek-chat",
         base_url: str = "https://api.deepseek.com",
         timeout: float = 45.0,
+        max_output_tokens: int = 1200,
         client: httpx.Client | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._max_output_tokens = max_output_tokens
         self._client = client
 
     @property
@@ -41,7 +42,7 @@ class DeepSeekProvider(LLMProvider):
             "messages": [message.model_dump() for message in messages],
             "response_format": {"type": "json_object"},
             "temperature": 0.2,
-            "max_tokens": 3000,
+            "max_tokens": self._max_output_tokens,
             "stream": False,
         }
 
@@ -63,15 +64,18 @@ class DeepSeekProvider(LLMProvider):
             content = response.json()["choices"][0]["message"]["content"]
             if not isinstance(content, str):
                 raise TypeError("message content is not text")
-            return response_model.model_validate_json(content)
-        except (
-            httpx.HTTPError,
-            KeyError,
-            IndexError,
-            TypeError,
-            json.JSONDecodeError,
-            ValidationError,
-        ) as exc:
+            try:
+                return response_model.model_validate_json(content)
+            except ValidationError as exc:
+                category = (
+                    "parsing_error"
+                    if any(error["type"] == "json_invalid" for error in exc.errors())
+                    else "schema_error"
+                )
+                raise LLMProviderError(
+                    "DeepSeek returned an invalid structured response", category
+                ) from exc
+        except (httpx.HTTPError, KeyError, IndexError, TypeError) as exc:
             raise LLMProviderError(
                 "DeepSeek returned no valid structured response"
             ) from exc

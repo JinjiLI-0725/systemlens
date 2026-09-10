@@ -1,5 +1,7 @@
 """Internal schemas for validated operation-batch execution."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -26,3 +28,14 @@ class ExecutionBatch(BaseModel):
 
     name: str
     operations: list[str] = Field(min_length=1)
+
+
+class BatchTiming(BaseModel):
+    """Public-safe latency and fallback metadata for one execution batch."""
+
+    batch_name: str
+    elapsed_ms: int = Field(ge=0)
+    fallback_used: bool
+    status: Literal["llm", "partial_fallback", "deterministic_fallback"]
+    missing_operation_ids: list[str] = Field(default_factory=list)
+    validation_error_category: str | None = None
