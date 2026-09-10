@@ -27,7 +27,8 @@ planner
   → provider-neutral operation executor
       ├── deterministic local fallback
       └── LLMProvider interface
-            └── DeepSeek OpenAI-compatible adapter
+            ├── DeepSeek OpenAI-compatible adapter
+            └── OpenRouter OpenAI-compatible adapter
   → Pydantic batch validation
       └── one JSON repair attempt, then deterministic batch fallback
   → structured synthesis
@@ -42,12 +43,26 @@ DeepSeek is the first provider and uses its OpenAI-compatible chat-completions A
 
 ```bash
 export SYSTEMLENS_EXECUTION_MODE=llm
+export SYSTEMLENS_LLM_PROVIDER=deepseek
 export DEEPSEEK_API_KEY='your-key-here'
 export DEEPSEEK_MODEL='deepseek-chat'  # optional; this is the default
 uvicorn backend.main:app --reload
 ```
 
-Never put the API key in source control. If `SYSTEMLENS_EXECUTION_MODE` is omitted or set to `deterministic`, no provider call is made. If `llm` is requested but `DEEPSEEK_API_KEY` is absent, SystemLens uses deterministic execution and records the reason in `execution_trace.fallback_events`. Invalid model JSON is retried once with a repair instruction; if repair also fails, only that batch falls back deterministically.
+### Enable OpenRouter
+
+OpenRouter uses its OpenAI-compatible `https://openrouter.ai/api/v1/chat/completions` endpoint. Select it independently from execution mode and configure its credentials and initial DeepSeek model:
+
+```bash
+export SYSTEMLENS_EXECUTION_MODE=llm
+export SYSTEMLENS_LLM_PROVIDER=openrouter
+export OPENROUTER_API_KEY='your-key-here'
+export OPENROUTER_BASE_URL='https://openrouter.ai/api/v1'  # optional; this is the default
+export OPENROUTER_MODEL='~deepseek/deepseek-v4-flash-latest'  # optional; this is the default
+uvicorn backend.main:app --reload
+```
+
+Never put API keys in source control or logs. Supported `SYSTEMLENS_LLM_PROVIDER` values are `deepseek` and `openrouter`; `deepseek` remains the default. If `SYSTEMLENS_EXECUTION_MODE` is omitted or set to `deterministic`, no provider call is made. If `llm` is requested but the selected provider's API key is absent, SystemLens uses deterministic execution and records the reason in `execution_trace.fallback_events`. Invalid model JSON is retried once with a repair instruction; if repair also fails, only that batch falls back deterministically.
 
 ### Problem classifier
 

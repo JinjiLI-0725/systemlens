@@ -2,10 +2,11 @@
 
 import re
 
-from backend.reasoning.operations import LENS_PURPOSES, operations_for_lens
 from backend.llm.base import LLMProvider
-from backend.llm.config import ExecutionMode, LLMConfig
+from backend.llm.config import ExecutionMode, LLMConfig, LLMProviderName
 from backend.llm.deepseek import DeepSeekProvider
+from backend.llm.openrouter import OpenRouterProvider
+from backend.reasoning.operations import LENS_PURPOSES, operations_for_lens
 from backend.schemas.analysis import (
     AnalysisRequest,
     AnalysisResponse,
@@ -371,12 +372,22 @@ def build_analysis(
             }
         )
 
-    active_provider = provider or DeepSeekProvider(
-        api_key=settings.deepseek_api_key or "",
-        model=settings.deepseek_model,
-        base_url=settings.deepseek_base_url,
-        timeout=settings.timeout_seconds,
-    )
+    if provider is not None:
+        active_provider = provider
+    elif settings.provider is LLMProviderName.OPENROUTER:
+        active_provider = OpenRouterProvider(
+            api_key=settings.openrouter_api_key or "",
+            model=settings.openrouter_model,
+            base_url=settings.openrouter_base_url,
+            timeout=settings.timeout_seconds,
+        )
+    else:
+        active_provider = DeepSeekProvider(
+            api_key=settings.deepseek_api_key or "",
+            model=settings.deepseek_model,
+            base_url=settings.deepseek_base_url,
+            timeout=settings.timeout_seconds,
+        )
     execution = execute_batches(request.problem.strip(), batches, active_provider)
     response = _synthesize_llm_analysis(baseline, execution.results)
     trace_updates.update(
