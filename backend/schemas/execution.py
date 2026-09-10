@@ -26,3 +26,11 @@ class ExecutionBatch(BaseModel):
 
     name: str
     operations: list[str] = Field(min_length=1)
+
+
+class BatchTiming(BaseModel):
+    """Public-safe latency and fallback metadata for one execution batch."""
+
+    batch_name: str
+    elapsed_ms: int = Field(ge=0)
+    fallback_used: bool

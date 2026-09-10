@@ -18,12 +18,14 @@ class DeepSeekProvider(LLMProvider):
         model: str = "deepseek-chat",
         base_url: str = "https://api.deepseek.com",
         timeout: float = 45.0,
+        max_output_tokens: int = 1200,
         client: httpx.Client | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._max_output_tokens = max_output_tokens
         self._client = client
 
     @property
@@ -41,7 +43,7 @@ class DeepSeekProvider(LLMProvider):
             "messages": [message.model_dump() for message in messages],
             "response_format": {"type": "json_object"},
             "temperature": 0.2,
-            "max_tokens": 3000,
+            "max_tokens": self._max_output_tokens,
             "stream": False,
         }
 

@@ -1,15 +1,22 @@
 """Provider-neutral batched operation execution."""
 
 import json
+import time
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 
 from backend.llm.base import LLMProvider, LLMProviderError, Message
 from backend.reasoning.operations import OPERATION_REGISTRY
-from backend.schemas.execution import BatchResult, ExecutionBatch, OperationFinding
+from backend.schemas.execution import (
+    BatchResult,
+    BatchTiming,
+    ExecutionBatch,
+    OperationFinding,
+)
 
 
 def batch_operations(
-    operation_ids: list[str], maximum_size: int = 4
+    operation_ids: list[str], maximum_size: int = 2
 ) -> list[ExecutionBatch]:
     """Group adjacent operations by canonical family and cap batch size."""
     batches: list[ExecutionBatch] = []
@@ -75,36 +82,86 @@ class BatchExecution:
 
     results: list[BatchResult] = field(default_factory=list)
     fallbacks: list[str] = field(default_factory=list)
+    timings: list[BatchTiming] = field(default_factory=list)
 
 
 def execute_batches(
-    problem: str, batches: list[ExecutionBatch], provider: LLMProvider
+    problem: str,
+    batches: list[ExecutionBatch],
+    provider: LLMProvider,
+    request_timeout: float = 30.0,
 ) -> BatchExecution:
-    """Execute batches, repairing invalid output once before local fallback."""
+    """Execute independent batches concurrently within one global time budget."""
     execution = BatchExecution()
-    for batch in batches:
-        messages = build_batch_messages(problem, batch)
+    if not batches:
+        return execution
+
+    pool = ThreadPoolExecutor(max_workers=len(batches), thread_name_prefix="llm-batch")
+    started = time.monotonic()
+    futures: list[Future[tuple[BatchResult, bool, str | None, int]]] = [
+        pool.submit(_execute_batch, problem, batch, provider) for batch in batches
+    ]
+    done, _ = wait(futures, timeout=request_timeout)
+    budget_elapsed_ms = round((time.monotonic() - started) * 1000)
+
+    # Read futures in plan order rather than completion order so synthesis is stable.
+    for batch, future in zip(batches, futures):
+        if future in done:
+            result, fallback_used, event, elapsed_ms = future.result()
+        else:
+            future.cancel()
+            fallback_used = True
+            elapsed_ms = budget_elapsed_ms
+            event = (
+                f"Batch '{batch.name}' exceeded the global request time budget; "
+                "deterministic fallback used."
+            )
+            result = deterministic_batch(batch)
+        execution.results.append(_restrict_findings(result, batch))
+        execution.timings.append(
+            BatchTiming(
+                batch_name=batch.name,
+                elapsed_ms=elapsed_ms,
+                fallback_used=fallback_used,
+            )
+        )
+        if event:
+            execution.fallbacks.append(event)
+    pool.shutdown(wait=False, cancel_futures=True)
+    return execution
+
+
+def _execute_batch(
+    problem: str, batch: ExecutionBatch, provider: LLMProvider
+) -> tuple[BatchResult, bool, str | None, int]:
+    """Execute and validate one batch, with one schema-repair attempt."""
+    started = time.monotonic()
+    messages = build_batch_messages(problem, batch)
+    fallback_used = False
+    event = None
+    try:
+        result = provider.generate_structured(messages, BatchResult)
+        _validate_batch_result(result, batch)
+    except LLMProviderError:
+        repair = Message(
+            role="user",
+            content=(
+                "Repair the previous answer. Return valid JSON matching the requested fields "
+                "exactly; include one finding for every requested operation and no prose outside JSON."
+            ),
+        )
         try:
-            result = provider.generate_structured(messages, BatchResult)
+            result = provider.generate_structured([*messages, repair], BatchResult)
             _validate_batch_result(result, batch)
         except LLMProviderError:
-            repair = Message(
-                role="user",
-                content=(
-                    "Repair the previous answer. Return valid JSON matching the requested fields "
-                    "exactly; include one finding for every requested operation and no prose outside JSON."
-                ),
+            fallback_used = True
+            event = (
+                f"Batch '{batch.name}' failed validation after one repair; "
+                "deterministic fallback used."
             )
-            try:
-                result = provider.generate_structured([*messages, repair], BatchResult)
-                _validate_batch_result(result, batch)
-            except LLMProviderError:
-                execution.fallbacks.append(
-                    f"Batch '{batch.name}' failed validation after one repair; deterministic fallback used."
-                )
-                result = deterministic_batch(batch)
-        execution.results.append(_restrict_findings(result, batch))
-    return execution
+            result = deterministic_batch(batch)
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    return result, fallback_used, event, elapsed_ms
 
 
 def _validate_batch_result(result: BatchResult, batch: ExecutionBatch) -> None:

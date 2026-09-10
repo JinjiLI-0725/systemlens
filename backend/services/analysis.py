@@ -353,7 +353,9 @@ def build_analysis(
     """Run the pipeline with optional provider-backed batch execution."""
     settings = config or LLMConfig.from_env()
     baseline = _build_deterministic_analysis(request)
-    batches = batch_operations(baseline.execution_trace.operations)
+    batches = batch_operations(
+        baseline.execution_trace.operations, maximum_size=settings.batch_size
+    )
     trace_updates = {
         "requested_execution_mode": settings.execution_mode.value,
         "execution_mode": settings.effective_mode.value,
@@ -380,6 +382,7 @@ def build_analysis(
             model=settings.openrouter_model,
             base_url=settings.openrouter_base_url,
             timeout=settings.timeout_seconds,
+            max_output_tokens=settings.max_output_tokens,
         )
     else:
         active_provider = DeepSeekProvider(
@@ -387,14 +390,21 @@ def build_analysis(
             model=settings.deepseek_model,
             base_url=settings.deepseek_base_url,
             timeout=settings.timeout_seconds,
+            max_output_tokens=settings.max_output_tokens,
         )
-    execution = execute_batches(request.problem.strip(), batches, active_provider)
+    execution = execute_batches(
+        request.problem.strip(),
+        batches,
+        active_provider,
+        request_timeout=settings.request_timeout_seconds,
+    )
     response = _synthesize_llm_analysis(baseline, execution.results)
     trace_updates.update(
         {
             "provider": active_provider.name,
             "model": active_provider.model,
             "fallback_events": execution.fallbacks,
+            "batch_timings": execution.timings,
         }
     )
     return response.model_copy(

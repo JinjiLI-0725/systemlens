@@ -1,6 +1,8 @@
 """Provider, batching, validation, fallback, and compatibility tests."""
 
 import json
+import threading
+import time
 
 import httpx
 
@@ -9,9 +11,13 @@ from backend.llm.config import ExecutionMode, LLMConfig, LLMProviderName
 from backend.llm.deepseek import DeepSeekProvider
 from backend.llm.openrouter import OpenRouterProvider
 from backend.schemas.analysis import AnalysisRequest, AnalysisResponse
-from backend.schemas.execution import BatchResult, OperationFinding
+from backend.schemas.execution import BatchResult, ExecutionBatch, OperationFinding
 from backend.services.analysis import build_analysis
-from backend.services.executor import batch_operations, build_batch_messages
+from backend.services.executor import (
+    batch_operations,
+    build_batch_messages,
+    execute_batches,
+)
 
 
 def _finding(operation_id: str) -> OperationFinding:
@@ -184,11 +190,13 @@ def test_openrouter_provider_selection_and_trace(monkeypatch) -> None:
             openrouter_model="deepseek/selected-model",
         ),
     )
-    assert len(selected.calls) == 2
+    assert len(selected.calls) == 4
     assert response.execution_trace.provider == "openrouter"
     assert response.execution_trace.model == "deepseek/selected-model"
     assert response.execution_trace.execution_mode == "llm"
     assert response.execution_trace.batches
+    assert len(response.execution_trace.batch_timings) == 4
+    assert not any(item.fallback_used for item in response.execution_trace.batch_timings)
     assert response.execution_trace.fallback_events == []
 
 
@@ -222,7 +230,7 @@ def test_openrouter_failure_falls_back_per_batch() -> None:
     )
     assert response.execution_trace.provider == "openrouter"
     assert response.execution_trace.execution_mode == "llm"
-    assert len(response.execution_trace.fallback_events) == 2
+    assert len(response.execution_trace.fallback_events) == 4
     assert all(
         "deterministic fallback" in event
         for event in response.execution_trace.fallback_events
@@ -245,6 +253,49 @@ def test_batches_follow_operation_families_and_prompt_uses_metadata() -> None:
     assert "chain-of-thought" in prompt[0].content
 
 
+def test_default_and_configurable_batch_size(monkeypatch) -> None:
+    operations = [
+        "define_system_boundary",
+        "identify_stocks_and_flows",
+        "detect_feedback_loops",
+        "identify_leverage_points",
+    ]
+    assert [len(batch.operations) for batch in batch_operations(operations)] == [2, 2]
+    monkeypatch.setenv("SYSTEMLENS_BATCH_SIZE", "3")
+    config = LLMConfig.from_env()
+    assert config.batch_size == 3
+    assert [len(batch.operations) for batch in batch_operations(
+        operations, config.batch_size
+    )] == [3, 1]
+
+
+def test_latency_limits_are_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("SYSTEMLENS_LLM_TIMEOUT", "7.5")
+    monkeypatch.setenv("SYSTEMLENS_MAX_OUTPUT_TOKENS", "640")
+    monkeypatch.setenv("SYSTEMLENS_REQUEST_TIMEOUT", "9")
+    config = LLMConfig.from_env()
+    assert config.timeout_seconds == 7.5
+    assert config.max_output_tokens == 640
+    assert config.request_timeout_seconds == 9
+    provider = OpenRouterProvider("secret", max_output_tokens=config.max_output_tokens)
+    assert provider.build_request([Message(role="user", content="test")])["max_tokens"] == 640
+
+
+def test_openrouter_timeout_is_wrapped_as_provider_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("too slow", request=request)
+
+    provider = OpenRouterProvider(
+        "secret", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    try:
+        provider.generate_structured([Message(role="user", content="test")], BatchResult)
+    except LLMProviderError:
+        pass
+    else:
+        raise AssertionError("provider timeout should be normalized")
+
+
 def test_successful_llm_execution_and_trace_metadata() -> None:
     provider = FakeProvider()
     response = build_analysis(
@@ -255,7 +306,7 @@ def test_successful_llm_execution_and_trace_metadata() -> None:
     assert response.execution_trace.execution_mode == "llm"
     assert response.execution_trace.provider == "fake"
     assert response.execution_trace.model == "fake-structured"
-    assert len(provider.calls) == 2
+    assert len(provider.calls) == 4
     assert "Preliminary conclusion" in response.summary
 
 
@@ -266,8 +317,8 @@ def test_invalid_json_is_repaired_once() -> None:
         LLMConfig(execution_mode=ExecutionMode.LLM, deepseek_api_key="test"),
         provider,
     )
-    assert len(provider.calls) == 3
-    assert "Repair the previous answer" in provider.calls[1][-1].content
+    assert len(provider.calls) == 5
+    assert any("Repair the previous answer" in call[-1].content for call in provider.calls)
     assert response.execution_trace.fallback_events == []
 
 
@@ -280,6 +331,78 @@ def test_second_invalid_response_falls_back_for_batch() -> None:
     )
     assert len(response.execution_trace.fallback_events) == 1
     assert "deterministic fallback" in response.execution_trace.fallback_events[0]
+
+
+class DelayedProvider(FakeProvider):
+    def __init__(self, delays: dict[str, float], failing: set[str] | None = None) -> None:
+        super().__init__()
+        self.delays = delays
+        self.failing = failing or set()
+        self.active = 0
+        self.maximum_active = 0
+        self.lock = threading.Lock()
+
+    def generate_structured(self, messages, response_model):
+        operation_id = next(
+            item for item in self.delays if f'"id": "{item}"' in messages[1].content
+        )
+        with self.lock:
+            self.active += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+        try:
+            time.sleep(self.delays[operation_id])
+            if operation_id in self.failing:
+                raise LLMProviderError("mock failure")
+            return response_model(findings=[_finding(operation_id)])
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def test_batches_run_in_parallel_and_results_keep_plan_order() -> None:
+    first = ExecutionBatch(name="systems_thinking", operations=["define_system_boundary"])
+    second = ExecutionBatch(name="critical_thinking", operations=["identify_claim"])
+    provider = DelayedProvider({"define_system_boundary": 0.08, "identify_claim": 0.01})
+    execution = execute_batches("problem", [first, second], provider, request_timeout=1)
+    assert provider.maximum_active == 2
+    assert [result.findings[0].operation_id for result in execution.results] == [
+        "define_system_boundary",
+        "identify_claim",
+    ]
+    assert [timing.batch_name for timing in execution.timings] == [
+        "systems_thinking",
+        "critical_thinking",
+    ]
+
+
+def test_partial_failure_falls_back_without_discarding_other_batch() -> None:
+    batches = [
+        ExecutionBatch(name="systems_thinking", operations=["define_system_boundary"]),
+        ExecutionBatch(name="critical_thinking", operations=["identify_claim"]),
+    ]
+    provider = DelayedProvider(
+        {"define_system_boundary": 0, "identify_claim": 0},
+        failing={"identify_claim"},
+    )
+    execution = execute_batches("problem", batches, provider, request_timeout=1)
+    assert [item.fallback_used for item in execution.timings] == [False, True]
+    assert len(execution.fallbacks) == 1
+    assert execution.results[0].findings[0].confidence == 0.42
+    assert execution.results[1].findings[0].confidence == 0.3
+
+
+def test_global_request_budget_falls_back_for_unfinished_batches() -> None:
+    batches = [
+        ExecutionBatch(name="systems_thinking", operations=["define_system_boundary"]),
+        ExecutionBatch(name="critical_thinking", operations=["identify_claim"]),
+    ]
+    provider = DelayedProvider({"define_system_boundary": 0, "identify_claim": 0.15})
+    started = time.monotonic()
+    execution = execute_batches("problem", batches, provider, request_timeout=0.03)
+    assert time.monotonic() - started < 0.12
+    assert [item.fallback_used for item in execution.timings] == [False, True]
+    assert "global request time budget" in execution.fallbacks[0]
+    assert execution.results[1].findings[0].confidence == 0.3
 
 
 def test_no_api_key_uses_deterministic_output_without_provider_call() -> None:
