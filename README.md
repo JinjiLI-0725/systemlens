@@ -165,3 +165,21 @@ backend/
 ├── tests/        # Backend and pipeline tests
 └── main.py       # Application setup
 ```
+
+## Run the frontend locally
+
+The frontend is a Next.js application in `frontend/` and requires Node.js 20 or newer. Start the FastAPI backend first, then run:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`. The Next.js server proxies browser requests from `/api/analyze` to `http://127.0.0.1:8000/analyze`, so provider credentials remain server-side. To use a backend at another address, set the server-only environment variable before starting Next.js:
+
+```bash
+SYSTEMLENS_BACKEND_URL=http://localhost:8000 npm run dev
+```
+
+Build and lint the frontend with `npm run build` and `npm run lint`.
