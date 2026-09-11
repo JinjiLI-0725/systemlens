@@ -77,6 +77,27 @@ class LeveragePoint(BaseModel):
     priority: str
 
 
+class KeyDriver(BaseModel):
+    """A problem-specific force that may materially shape the outcome."""
+
+    title: str
+    explanation: str
+
+
+class CompetingExplanation(BaseModel):
+    """An alternative explanation that could weaken the leading diagnosis."""
+
+    explanation: str
+    why_it_matters: str
+
+
+class NextCheck(BaseModel):
+    """A concrete observation or question that would improve the diagnosis."""
+
+    question: str
+    signal: str
+
+
 class GraphNode(BaseModel):
     """A variable, actor, driver, or outcome in the system graph."""
 
@@ -114,6 +135,11 @@ class AnalysisResponse(BaseModel):
     """The complete structured result returned by the analysis endpoint."""
 
     problem: str
+    diagnosis: str
+    key_drivers: list[KeyDriver]
+    competing_explanations: list[CompetingExplanation]
+    next_checks: list[NextCheck]
+    synthesis: str
     summary: str
     selected_lenses: list[SelectedLens]
     claims: list[Claim]
