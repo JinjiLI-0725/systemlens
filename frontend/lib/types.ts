@@ -46,6 +46,21 @@ export interface LeveragePoint {
   priority: string;
 }
 
+export interface KeyDriver {
+  title: string;
+  explanation: string;
+}
+
+export interface CompetingExplanation {
+  explanation: string;
+  why_it_matters: string;
+}
+
+export interface NextCheck {
+  question: string;
+  signal: string;
+}
+
 export interface GraphNode {
   id: string;
   label: string;
@@ -84,6 +99,11 @@ export interface ExecutionTrace {
 
 export interface AnalysisResponse {
   problem: string;
+  diagnosis: string;
+  key_drivers: KeyDriver[];
+  competing_explanations: CompetingExplanation[];
+  next_checks: NextCheck[];
+  synthesis: string;
   summary: string;
   selected_lenses: SelectedLens[];
   claims: Claim[];
