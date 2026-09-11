@@ -64,33 +64,35 @@ def build_batch_messages(problem: str, batch: ExecutionBatch) -> list[Message]:
     system = (
         "You execute analytical operations and return JSON only. Treat every output as a "
         "preliminary hypothesis unless supported by the input. Separate observations from "
-        "inferences and preserve uncertainty. Never fabricate evidence or reveal chain-of-thought."
+        "inferences and preserve uncertainty. Never fabricate evidence or reveal chain-of-thought. "
+        "Every conclusion must be problem-specific and analytically substantive: answer the "
+        "operation's purpose for this exact problem. Never echo an operation name as a conclusion, "
+        "and never use generic filler such as 'remains a preliminary analytical hypothesis'."
     )
     user = (
         f"Problem:\n{problem}\n\nOperations metadata:\n"
         f"{json.dumps(metadata, separators=(',', ':'))}\n\n"
         f"Return JSON matching this exact template:\n{json.dumps(example, separators=(',', ':'))}\n"
         f"The findings array length MUST equal {len(batch.operations)}. Copy each supplied "
-        "operation_id verbatim, exactly once. Keep every text array concise. Confidence is 0 to 1."
+        "operation_id verbatim, exactly once. Keep every text array concise. Confidence is 0 to 1. "
+        "Use conclusions to state the actual analytical result, not the task you performed. If the "
+        "input cannot support a substantive conclusion, leave conclusions empty and put the missing "
+        "question in unknowns instead."
     )
     return [Message(role="system", content=system), Message(role="user", content=user)]
 
 
 def deterministic_batch(batch: ExecutionBatch) -> BatchResult:
-    """Produce conservative per-operation placeholders for local fallback."""
+    """Produce conservative fallback findings without inventing placeholder claims."""
     return BatchResult(
         findings=[
             OperationFinding(
                 operation_id=operation_id,
-                observations=[
-                    "The submitted problem statement is the only direct observation."
-                ],
+                observations=[],
                 inferences=[],
-                assumptions=["The problem framing may be incomplete or contested."],
+                assumptions=[],
                 unknowns=list(OPERATION_REGISTRY[operation_id].questions[:2]),
-                conclusions=[
-                    f"{OPERATION_REGISTRY[operation_id].name} remains a preliminary analytical hypothesis."
-                ],
+                conclusions=[],
                 confidence=0.3,
             )
             for operation_id in batch.operations
