@@ -4,7 +4,7 @@ import type { AnalysisResponse, ApiError } from "@/lib/types";
 export const runtime = "nodejs";
 
 const BACKEND_URL = process.env.SYSTEMLENS_BACKEND_URL ?? "http://127.0.0.1:8000";
-const TIMEOUT_MS = 60_000;
+const TIMEOUT_MS = 180_000;
 
 function errorResponse(error: ApiError["error"], message: string, status: number) {
   return NextResponse.json({ error, message } satisfies ApiError, { status });
