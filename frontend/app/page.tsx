@@ -28,7 +28,7 @@ function ConfidenceDisplay({ confidence }: { confidence: Confidence }) {
       </div>
       <div className="confidence-copy">
         <div className="confidence-heading">
-          <strong>{confidence.level} confidence</strong>
+          <strong>{confidence.level} diagnostic confidence</strong>
           <span className="confidence-line" aria-hidden="true"><i style={{ width: `${percent}%` }} /></span>
         </div>
         <p>{confidence.rationale}</p>
@@ -45,26 +45,34 @@ function Results({ result }: { result: AnalysisResponse }) {
   return (
     <section className="results" aria-live="polite">
       <div className="results-kicker"><span>Analysis complete</span><span>{label(trace.problem_class)}</span></div>
-      <div className="summary-grid">
-        <h2>Summary</h2>
-        <p>{result.summary}</p>
+
+      <div className="diagnosis-grid">
+        <div>
+          <p className="result-label">Diagnosis</p>
+          <span className="result-note">What is probably going on</span>
+        </div>
+        <p>{result.diagnosis}</p>
       </div>
 
-      <section className="section-block lenses-section">
-        <div className="section-heading"><p>01</p><h2>Reasoning lenses</h2><span>{result.selected_lenses.length} selected</span></div>
-        <div className="lens-grid">
-          {result.selected_lenses.map((lens) => (
-            <article className="lens-card" key={lens.name}>
-              <h3>{label(lens.name)}</h3>
-              <p>{lens.purpose}</p>
-              <div className="tags">{lens.operations.map((operation) => <span key={operation}>{label(operation)}</span>)}</div>
-            </article>
-          ))}
-        </div>
+      <section className="section-block drivers-section">
+        <div className="section-heading"><p>01</p><h2>Key drivers</h2><span>{result.key_drivers.length} signals</span></div>
+        {result.key_drivers.length > 0 ? (
+          <div className="driver-grid">
+            {result.key_drivers.map((driver, index) => (
+              <article key={`${driver.title}-${index}`}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <h3>{driver.title}</h3>
+                {driver.explanation !== driver.title && <p>{driver.explanation}</p>}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-insight">No driver is strong enough to surface yet. The checks below show what evidence would clarify the diagnosis.</p>
+        )}
       </section>
 
       <section className="section-block">
-        <div className="section-heading"><p>02</p><h2>Claims</h2><span>{result.claims.length} identified</span></div>
+        <div className="section-heading"><p>02</p><h2>Claims under examination</h2><span>{result.claims.length} identified</span></div>
         <div className="stack-list">
           {result.claims.map((claim, index) => (
             <article className="claim" key={`${claim.statement}-${index}`}>
@@ -78,7 +86,7 @@ function Results({ result }: { result: AnalysisResponse }) {
 
       <div className="split-sections">
         <section className="section-block compact-section">
-          <div className="section-heading"><p>03</p><h2>Assumptions</h2></div>
+          <div className="section-heading"><p>03</p><h2>Critical assumptions</h2></div>
           {result.assumptions.map((item, index) => (
             <article className="detail-item" key={`${item.statement}-${index}`}>
               <h3>{item.statement}</h3>
@@ -88,18 +96,32 @@ function Results({ result }: { result: AnalysisResponse }) {
           ))}
         </section>
         <section className="section-block compact-section">
-          <div className="section-heading"><p>04</p><h2>Unknowns</h2></div>
-          {result.unknowns.map((item, index) => (
+          <div className="section-heading"><p>04</p><h2>What to check next</h2></div>
+          {result.next_checks.map((item, index) => (
             <article className="detail-item unknown" key={`${item.question}-${index}`}>
               <h3>{item.question}</h3>
-              <p><b>Importance</b>{item.importance}</p>
+              <p><b>Look for</b>{item.signal}</p>
             </article>
           ))}
         </section>
       </div>
 
+      {result.competing_explanations.length > 0 && (
+        <section className="section-block alternatives-section">
+          <div className="section-heading"><p>05</p><h2>Competing explanations</h2><span>Stress-test the diagnosis</span></div>
+          <div className="alternative-list">
+            {result.competing_explanations.map((item, index) => (
+              <article key={`${item.explanation}-${index}`}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <div><h3>{item.explanation}</h3><p>{item.why_it_matters}</p></div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="section-block leverage-section">
-        <div className="section-heading"><p>05</p><h2>Leverage points</h2><span>Places to intervene</span></div>
+        <div className="section-heading"><p>06</p><h2>High-leverage actions</h2><span>Places to intervene</span></div>
         <div className="leverage-grid">
           {result.leverage_points.map((point, index) => (
             <article key={`${point.title}-${index}`}>
@@ -113,27 +135,47 @@ function Results({ result }: { result: AnalysisResponse }) {
       </section>
 
       <section className="section-block confidence-section">
-        <div className="section-heading"><p>06</p><h2>Confidence</h2></div>
+        <div className="section-heading"><p>07</p><h2>Evidence strength</h2></div>
         <ConfidenceDisplay confidence={result.confidence} />
       </section>
 
-      <details className="execution">
-        <summary><span>Execution details</span><small>Inspectable metadata</small></summary>
-        <div className="metadata-grid">
-          <dl><dt>Mode</dt><dd>{label(trace.execution_mode)}</dd></dl>
-          <dl><dt>Provider</dt><dd>{trace.provider ?? "Local"}</dd></dl>
-          <dl><dt>Model</dt><dd>{trace.model ?? "—"}</dd></dl>
-          <dl><dt>Elapsed</dt><dd>{(totalElapsed / 1000).toFixed(2)}s</dd></dl>
-          <dl><dt>Fallback</dt><dd className={fallbackUsed ? "fallback-yes" : "fallback-no"}>{fallbackUsed ? "Used" : "Not used"}</dd></dl>
-        </div>
-        <div className="batch-list">
-          {trace.batch_timings.map((batch, index) => (
-            <div key={`${batch.batch_name}-${index}`}>
-              <span>{batch.batch_name}</span><span>{label(batch.status)}</span><span>{batch.elapsed_ms}ms</span>
+      <section className="section-block synthesis-section">
+        <div className="section-heading"><p>08</p><h2>Synthesis</h2><span>Integrated view</span></div>
+        <p className="synthesis-copy">{result.synthesis}</p>
+      </section>
+
+      <details className="reasoning-details">
+        <summary><span>How SystemLens analyzed this</span><small>{result.selected_lenses.length} lenses · {trace.operations.length} operations</small></summary>
+        <div className="reasoning-inner">
+          <div className="lens-grid">
+            {result.selected_lenses.map((lens) => (
+              <article className="lens-card" key={lens.name}>
+                <h3>{label(lens.name)}</h3>
+                <p>{lens.purpose}</p>
+                <div className="tags">{lens.operations.map((operation) => <span key={operation}>{label(operation)}</span>)}</div>
+              </article>
+            ))}
+          </div>
+
+          <details className="execution">
+            <summary><span>Execution details</span><small>Inspectable metadata</small></summary>
+            <div className="metadata-grid">
+              <dl><dt>Mode</dt><dd>{label(trace.execution_mode)}</dd></dl>
+              <dl><dt>Provider</dt><dd>{trace.provider ?? "Local"}</dd></dl>
+              <dl><dt>Model</dt><dd>{trace.model ?? "—"}</dd></dl>
+              <dl><dt>Elapsed</dt><dd>{(totalElapsed / 1000).toFixed(2)}s</dd></dl>
+              <dl><dt>Fallback</dt><dd className={fallbackUsed ? "fallback-yes" : "fallback-no"}>{fallbackUsed ? "Used" : "Not used"}</dd></dl>
             </div>
-          ))}
+            <div className="batch-list">
+              {trace.batch_timings.map((batch, index) => (
+                <div key={`${batch.batch_name}-${index}`}>
+                  <span>{batch.batch_name}</span><span>{label(batch.status)}</span><span>{batch.elapsed_ms}ms</span>
+                </div>
+              ))}
+            </div>
+            {trace.fallback_events.length > 0 && <p className="fallback-note">{trace.fallback_events.join(" · ")}</p>}
+          </details>
         </div>
-        {trace.fallback_events.length > 0 && <p className="fallback-note">{trace.fallback_events.join(" · ")}</p>}
       </details>
     </section>
   );
@@ -186,9 +228,9 @@ export default function Home() {
 
       <section className="hero" id="top">
         <div className="hero-copy">
-          <p className="eyebrow"><span /> Structured analysis</p>
-          <h1>See the structure behind <em>complex problems.</em></h1>
-          <p className="intro">SystemLens decomposes difficult questions using explicit reasoning lenses—surfacing claims, assumptions, unknowns, and the points where change matters most.</p>
+          <p className="eyebrow"><span /> Structured diagnosis</p>
+          <h1>Understand why <em>complex problems</em> behave the way they do.</h1>
+          <p className="intro">SystemLens turns a messy question into a structured diagnosis of drivers, assumptions, uncertainties, competing explanations, and high-leverage next steps.</p>
         </div>
 
         <form className="analyze-form" onSubmit={analyze}>
