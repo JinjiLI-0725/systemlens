@@ -12,20 +12,23 @@ from backend.schemas.analysis import (
     AnalysisResponse,
     Assumption,
     Claim,
+    CompetingExplanation,
     Confidence,
     ExecutionTrace,
     GraphEdge,
     GraphNode,
+    KeyDriver,
     LeveragePoint,
     LensName,
+    NextCheck,
     SelectedLens,
     Unknown,
 )
-from backend.schemas.execution import BatchResult
+from backend.schemas.execution import BatchResult, OperationFinding
 from backend.services.classifier import ProblemClass, classify_problem
+from backend.services.executor import batch_operations, execute_batches
 from backend.services.lens_selector import select_lenses
 from backend.services.planner import plan_operations
-from backend.services.executor import batch_operations, execute_batches
 
 EVIDENCE_SIGNALS = (
     "according to",
@@ -38,9 +41,48 @@ EVIDENCE_SIGNALS = (
     "sample",
 )
 
+ALTERNATIVE_OPERATION_IDS = {
+    "generate_counterarguments",
+    "detect_confounders",
+    "test_reverse_causation",
+    "generate_counterfactual",
+}
+
+DRIVER_OPERATION_IDS = {
+    "identify_stocks_and_flows",
+    "detect_feedback_loops",
+    "identify_leverage_points",
+    "detect_confounders",
+    "test_reverse_causation",
+}
+
 
 def _subject(problem: str) -> str:
     return problem.rstrip(" ?.!")
+
+
+def _unique(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(item.strip() for item in items if item and item.strip()))
+
+
+def _compact_title(text: str, limit: int = 72) -> str:
+    clean = " ".join(text.split())
+    for separator in (":", ";", " — ", " - "):
+        if separator in clean:
+            head = clean.split(separator, 1)[0].strip()
+            if 8 <= len(head) <= limit:
+                return head
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 1].rstrip() + "…"
+
+
+def _finding_text(findings: list[OperationFinding], operation_ids: set[str]) -> list[str]:
+    selected = [item for item in findings if item.operation_id in operation_ids]
+    return _unique(
+        [text for item in selected for text in item.inferences]
+        + [text for item in selected for text in item.conclusions]
+    )
 
 
 def _confidence(problem: str, unknown_count: int) -> Confidence:
@@ -137,7 +179,7 @@ def _selected_lens_details(lenses: list[LensName]) -> list[SelectedLens]:
 
 
 def _build_deterministic_analysis(request: AnalysisRequest) -> AnalysisResponse:
-    """Run classification, lens selection, planning, and template execution."""
+    """Run classification, lens selection, planning, and conservative template execution."""
     problem = request.problem.strip()
     problem_class = classify_problem(problem)
     lenses = select_lenses(problem_class, request.selected_lenses)
@@ -148,6 +190,12 @@ def _build_deterministic_analysis(request: AnalysisRequest) -> AnalysisResponse:
     actor_label = "Affected people or organizations"
     if terms:
         actor_label = " / ".join(terms[:2])
+
+    diagnosis = (
+        f"This appears to be a {problem_class.value.replace('_', ' ')} question, but the prompt alone "
+        "does not establish which explanation is strongest. Treat the analysis below as a map of "
+        "candidate mechanisms and tests rather than a factual verdict."
+    )
 
     assumptions = [
         Assumption(
@@ -179,12 +227,7 @@ def _build_deterministic_analysis(request: AnalysisRequest) -> AnalysisResponse:
         )
 
     graph_edges = [
-        GraphEdge(
-            source="boundary",
-            target="actors",
-            relationship="scopes",
-            polarity="uncertain",
-        ),
+        GraphEdge(source="boundary", target="actors", relationship="scopes", polarity="uncertain"),
         GraphEdge(
             source="drivers",
             target="outcome",
@@ -207,7 +250,6 @@ def _build_deterministic_analysis(request: AnalysisRequest) -> AnalysisResponse:
                 polarity="uncertain",
             )
         )
-
     if "identify_stocks_and_flows" in plan:
         graph_edges.append(
             GraphEdge(
@@ -217,7 +259,6 @@ def _build_deterministic_analysis(request: AnalysisRequest) -> AnalysisResponse:
                 polarity="uncertain",
             )
         )
-
     if "distinguish_correlation_from_causation" in plan:
         graph_edges.append(
             GraphEdge(
@@ -230,17 +271,23 @@ def _build_deterministic_analysis(request: AnalysisRequest) -> AnalysisResponse:
 
     return AnalysisResponse(
         problem=problem,
-        summary=(
-            f"Preliminary {problem_class.value.replace('_', ' ')} analysis of: {_subject(problem)}. "
-            "The items below are heuristic hypotheses to test, not established facts."
-        ),
+        diagnosis=diagnosis,
+        key_drivers=[],
+        competing_explanations=[],
+        next_checks=[
+            NextCheck(
+                question=item.question,
+                signal="Evidence here could materially strengthen, weaken, or redirect the diagnosis.",
+            )
+            for item in unknowns[:5]
+        ],
+        synthesis=diagnosis,
+        summary=diagnosis,
         selected_lenses=_selected_lens_details(lenses),
         claims=[
             Claim(
                 statement=f"Preliminary claim under examination: {_subject(problem)}.",
-                evidence=[
-                    "The submitted wording is the only direct input; it is not corroborating evidence."
-                ],
+                evidence=["The submitted wording is the only direct input; it is not corroborating evidence."],
                 confidence=confidence,
             )
         ],
@@ -297,12 +344,14 @@ def _build_deterministic_analysis(request: AnalysisRequest) -> AnalysisResponse:
 def _synthesize_llm_analysis(
     baseline: AnalysisResponse, results: list[BatchResult]
 ) -> AnalysisResponse:
-    """Combine validated batch findings into the established response contract."""
+    """Turn validated operation findings into an insight-first public response."""
     findings = [finding for result in results for finding in result.findings]
-    conclusions = [text for finding in findings for text in finding.conclusions]
-    assumptions = [text for finding in findings for text in finding.assumptions]
-    unknowns = [text for finding in findings for text in finding.unknowns]
-    observations = [text for finding in findings for text in finding.observations]
+    conclusions = _unique([text for finding in findings for text in finding.conclusions])
+    assumptions = _unique([text for finding in findings for text in finding.assumptions])
+    unknowns = _unique([text for finding in findings for text in finding.unknowns])
+    observations = _unique([text for finding in findings for text in finding.observations])
+    inferences = _unique([text for finding in findings for text in finding.inferences])
+
     average = (
         round(sum(item.confidence for item in findings) / len(findings), 2)
         if findings
@@ -312,14 +361,60 @@ def _synthesize_llm_analysis(
         score=average,
         level="high" if average >= 0.75 else "moderate" if average >= 0.5 else "low",
         rationale=(
-            "Calibrated from validated batch outputs; conclusions remain preliminary and "
+            "Calibrated from validated batch outputs; the diagnosis remains preliminary and "
             "source evidence has not been independently verified."
         ),
     )
+
+    diagnosis_parts = conclusions[:2]
+    diagnosis = " ".join(diagnosis_parts) if diagnosis_parts else baseline.diagnosis
+    synthesis = " ".join(conclusions[:6]) or baseline.synthesis
+
+    driver_texts = _finding_text(findings, DRIVER_OPERATION_IDS)
+    if not driver_texts:
+        driver_texts = _unique(inferences + conclusions)
+    key_drivers = [
+        KeyDriver(title=_compact_title(item), explanation=item)
+        for item in driver_texts[:6]
+    ]
+
+    alternative_texts = _finding_text(findings, ALTERNATIVE_OPERATION_IDS)
+    competing_explanations = [
+        CompetingExplanation(
+            explanation=item,
+            why_it_matters="If this explanation fits the evidence better, the leading diagnosis or intervention should change.",
+        )
+        for item in alternative_texts[:5]
+    ]
+
+    next_checks = [
+        NextCheck(
+            question=item,
+            signal="Look for evidence that discriminates between the leading diagnosis and plausible alternatives.",
+        )
+        for item in unknowns[:6]
+    ] or baseline.next_checks
+
+    leverage_texts = _finding_text(findings, {"identify_leverage_points"})
+    leverage_points = [
+        LeveragePoint(
+            title=_compact_title(item),
+            description=item,
+            related_lens=LensName.SYSTEMS_THINKING,
+            priority="high" if index == 0 else "medium",
+        )
+        for index, item in enumerate(leverage_texts[:4])
+    ] or baseline.leverage_points
+
     payload = baseline.model_dump()
     payload.update(
         {
-            "summary": " ".join(conclusions[:4]) or baseline.summary,
+            "diagnosis": diagnosis,
+            "key_drivers": key_drivers,
+            "competing_explanations": competing_explanations,
+            "next_checks": next_checks,
+            "synthesis": synthesis,
+            "summary": diagnosis,
             "claims": [
                 Claim(statement=item, evidence=observations[:3], confidence=confidence)
                 for item in conclusions[:6]
@@ -328,17 +423,15 @@ def _synthesize_llm_analysis(
             "assumptions": [
                 Assumption(
                     statement=f"Preliminary hypothesis: {item}",
-                    impact="If false, one or more batch conclusions may change.",
+                    impact="If false, one or more parts of the diagnosis may change.",
                     validation_question="What observation would verify or falsify this assumption?",
                 )
-                for item in dict.fromkeys(assumptions)
+                for item in assumptions
             ][:8]
             or baseline.assumptions,
-            "unknowns": [
-                Unknown(question=item, importance="high")
-                for item in dict.fromkeys(unknowns)
-            ][:8]
+            "unknowns": [Unknown(question=item, importance="high") for item in unknowns][:8]
             or baseline.unknowns,
+            "leverage_points": leverage_points,
             "confidence": confidence,
         }
     )
@@ -368,9 +461,7 @@ def build_analysis(
             ]
         return baseline.model_copy(
             update={
-                "execution_trace": baseline.execution_trace.model_copy(
-                    update=trace_updates
-                )
+                "execution_trace": baseline.execution_trace.model_copy(update=trace_updates)
             }
         )
 
