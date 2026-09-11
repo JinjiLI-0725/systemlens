@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import type { AnalysisResponse, ApiError, Confidence } from "@/lib/types";
 
 const examples = [
-  "Why are young professionals leaving Hong Kong?",
+  "Why do software projects keep missing their deadlines?",
   "Does remote work cause lower productivity?",
   "Should a startup hire now or wait six months?",
 ];
