@@ -26,7 +26,7 @@ def test_health() -> None:
 def test_requested_examples_are_classified_transparently() -> None:
     assert (
         classify_problem("Why do software projects keep missing their deadlines?")
-        == ProblemClass.SYSTEM
+        == ProblemClass.CAUSAL
     )
     assert (
         classify_problem("Should a startup hire now or wait six months?")
@@ -120,9 +120,9 @@ def test_analyze_returns_structured_deterministic_response_and_trace() -> None:
 
     body = first_response.json()
     assert body["problem"] == request["problem"]
-    assert body["execution_trace"]["problem_class"] == "system_problem"
+    assert body["execution_trace"]["problem_class"] == "causal_problem"
     assert body["execution_trace"]["selected_lenses"] == [
-        "systems_thinking",
+        "causal_reasoning",
         "critical_thinking",
     ]
     assert body["execution_trace"]["operations"]
