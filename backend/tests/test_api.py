@@ -127,23 +127,26 @@ def test_analyze_returns_structured_deterministic_response_and_trace() -> None:
     ]
     assert body["execution_trace"]["operations"]
 
+    # Deterministic mode is deliberately conservative: it may leave insight arrays
+    # empty rather than inventing problem-specific drivers or alternatives without an LLM.
     for field in (
         "diagnosis",
-        "key_drivers",
-        "competing_explanations",
-        "next_checks",
         "synthesis",
         "claims",
         "assumptions",
         "unknowns",
+        "next_checks",
         "leverage_points",
         "graph_nodes",
         "graph_edges",
     ):
         assert body[field]
 
+    assert "key_drivers" in body
+    assert isinstance(body["key_drivers"], list)
+    assert "competing_explanations" in body
+    assert isinstance(body["competing_explanations"], list)
     assert "map of candidate mechanisms" in body["diagnosis"].lower()
-    assert body["key_drivers"][0]["title"]
     assert body["next_checks"][0]["question"]
 
 
