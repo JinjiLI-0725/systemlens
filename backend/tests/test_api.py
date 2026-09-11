@@ -25,7 +25,7 @@ def test_health() -> None:
 
 def test_requested_examples_are_classified_transparently() -> None:
     assert (
-        classify_problem("Why are young professionals leaving Hong Kong?")
+        classify_problem("Why do software projects keep missing their deadlines?")
         == ProblemClass.SYSTEM
     )
     assert (
@@ -112,7 +112,7 @@ def test_planning_is_ordered_and_deterministic() -> None:
 
 
 def test_analyze_returns_structured_deterministic_response_and_trace() -> None:
-    request = {"problem": "Why are young professionals leaving Hong Kong?"}
+    request = {"problem": "Why do software projects keep missing their deadlines?"}
     first_response = client.post("/analyze", json=request)
     second_response = client.post("/analyze", json=request)
     assert first_response.status_code == 200
@@ -126,8 +126,13 @@ def test_analyze_returns_structured_deterministic_response_and_trace() -> None:
         "critical_thinking",
     ]
     assert body["execution_trace"]["operations"]
-    assert "preliminary" in body["summary"].lower()
+
     for field in (
+        "diagnosis",
+        "key_drivers",
+        "competing_explanations",
+        "next_checks",
+        "synthesis",
         "claims",
         "assumptions",
         "unknowns",
@@ -136,6 +141,10 @@ def test_analyze_returns_structured_deterministic_response_and_trace() -> None:
         "graph_edges",
     ):
         assert body[field]
+
+    assert "map of candidate mechanisms" in body["diagnosis"].lower()
+    assert body["key_drivers"][0]["title"]
+    assert body["next_checks"][0]["question"]
 
 
 def test_confidence_is_lower_without_evidence_signals() -> None:
