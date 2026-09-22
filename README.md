@@ -1,4 +1,27 @@
-# SystemLens
+# SystemLens — AI Decision Intelligence
+
+[**Live Demo → lens.insightdock.com**](https://lens.insightdock.com)
+
+SystemLens is a full-stack LLM application for structured decision analysis. Instead of returning only a fluent answer, it stress-tests a decision by surfacing assumptions, competing explanations, uncertainty, evidence gaps, and decision triggers.
+
+## Why I built it
+
+General-purpose LLMs are excellent at generating answers, but complex decisions often need a repeatable reasoning process. SystemLens turns open-ended analysis into a structured decision brief that makes the reasoning—and its limitations—visible.
+
+## What this project demonstrates
+
+- **LLM application engineering** — provider-backed structured generation with deterministic fallbacks
+- **Reasoning orchestration** — problem classification, lens selection, operation planning, batching, and synthesis
+- **Full-stack product development** — FastAPI backend + Next.js frontend
+- **Reliability engineering** — schema validation, timeouts, partial fallbacks, execution traces, and confidence handling
+- **Production deployment** — Linux, Nginx, systemd, HTTPS, and a live public deployment
+- **AI product UX** — decision briefs, uncertainty display, next checks, and decision triggers
+
+**Tech:** Python · FastAPI · Pydantic · Next.js · React · TypeScript · OpenRouter · Nginx · Linux
+
+> API keys are never committed to the repository. Use `.env.example` to configure your own environment.
+
+---
 
 SystemLens is an API for structuring complex problems through explicit thinking lenses. Its definitions come from [`docs/lens-taxonomy.md`](docs/lens-taxonomy.md), supported by [`docs/thinking-canon.md`](docs/thinking-canon.md).
 
